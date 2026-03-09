@@ -91,13 +91,49 @@ ClaudeCodeMonitor is a lightweight macOS menu bar application that provides real
 git clone https://github.com/sealovesky/ClaudeCodeMonitor.git
 cd ClaudeCodeMonitor
 
-# Build and run
+# Build and run (ad-hoc signing)
 swift run
+
+# Or build a signed app bundle (recommended, avoids Keychain password prompts)
+./build.sh
+open build/ClaudeCodeMonitor.app
 ```
+
+> **Note:** `build.sh` requires a local code signing certificate named "ClaudeCodeMonitor Signing". See [Code Signing Setup](#code-signing-setup) below.
 
 #### Download Release
 
 Check the [Releases](https://github.com/sealovesky/ClaudeCodeMonitor/releases) page for pre-built binaries.
+
+#### Code Signing Setup
+
+To avoid repeated Keychain password prompts when accessing Claude Code's OAuth token, create a self-signed certificate:
+
+```bash
+# Generate certificate (valid for 100 years)
+cat > /tmp/cert.cfg <<'EOF'
+[ req ]
+default_bits       = 2048
+distinguished_name = req_dn
+x509_extensions    = codesign
+[ req_dn ]
+CN = ClaudeCodeMonitor Signing
+[ codesign ]
+keyUsage = digitalSignature
+extendedKeyUsage = codeSigning
+EOF
+
+openssl req -x509 -newkey rsa:2048 -keyout /tmp/signing.key -out /tmp/signing.crt \
+    -days 36500 -nodes -config /tmp/cert.cfg -subj "/CN=ClaudeCodeMonitor Signing"
+
+# Import to login keychain
+security import /tmp/signing.crt -k ~/Library/Keychains/login.keychain-db -t cert
+security import /tmp/signing.key -k ~/Library/Keychains/login.keychain-db -t priv -T /usr/bin/codesign
+
+rm /tmp/cert.cfg /tmp/signing.key /tmp/signing.crt
+```
+
+Then open **Keychain Access**, find the "ClaudeCodeMonitor Signing" certificate, double-click → **Trust** → set **Code Signing** to **Always Trust**.
 
 ### Usage
 
@@ -128,6 +164,8 @@ For API quota display, it reads your OAuth token from Keychain (set by Claude Co
 ```
 ClaudeCodeMonitor/
 ├── Package.swift                    # Swift Package configuration
+├── build.sh                         # Build & sign script
+├── ClaudeCodeMonitor.entitlements   # App entitlements
 ├── Sources/ClaudeCodeMonitor/
 │   ├── App/
 │   │   └── ClaudeCodeMonitorApp.swift   # @main entry, MenuBarExtra
@@ -250,9 +288,15 @@ ClaudeCodeMonitor 是一款轻量级的 macOS 菜单栏应用，用于实时监�
 git clone https://github.com/sealovesky/ClaudeCodeMonitor.git
 cd ClaudeCodeMonitor
 
-# 构建运行
+# 构建运行（ad-hoc 签名）
 swift run
+
+# 或构建签名的 app bundle（推荐，避免 Keychain 反复弹密码框）
+./build.sh
+open build/ClaudeCodeMonitor.app
 ```
+
+> **注意：** `build.sh` 需要一个名为 "ClaudeCodeMonitor Signing" 的本地代码签名证书。请参考上方英文部分的 [Code Signing Setup](#code-signing-setup) 创建证书。
 
 #### 下载发布版
 
@@ -287,6 +331,8 @@ API 配额显示通过读取 Keychain 中的 OAuth Token（由 Claude Code 设�
 ```
 ClaudeCodeMonitor/
 ├── Package.swift                    # Swift Package 配置
+├── build.sh                         # 构建 & 签名脚本
+├── ClaudeCodeMonitor.entitlements   # 应用权限声明
 ├── Sources/ClaudeCodeMonitor/
 │   ├── App/
 │   │   └── ClaudeCodeMonitorApp.swift   # @main 入口, MenuBarExtra
