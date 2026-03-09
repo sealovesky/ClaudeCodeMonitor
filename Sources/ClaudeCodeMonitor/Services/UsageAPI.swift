@@ -86,13 +86,13 @@ enum UsageAPI {
             return envToken
         }
 
-        // 2. macOS Keychain
-        if let keychainToken = readFromKeychain() {
-            return keychainToken
+        // 2. 文件优先（不会触发系统授权弹窗）
+        if let fileToken = readFromCredentialsFile() {
+            return fileToken
         }
 
-        // 3. 文件回退
-        return readFromCredentialsFile()
+        // 3. Keychain 兜底（可能触发系统授权弹窗）
+        return readFromKeychain()
     }
 
     private static func readFromKeychain() -> String? {
