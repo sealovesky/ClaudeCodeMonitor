@@ -12,6 +12,7 @@ final class MonitorStore {
     var totalUniqueDayCount: Int = 0
     var usageData: UsageData?
     var usageLoading: Bool = false
+    var usageRateLimited: Bool = false
 
     // MARK: - Cached computed data (updated only on data reload)
     var latestActivity: DailyActivity?
@@ -54,9 +55,22 @@ final class MonitorStore {
 
     func loadUsage() {
         usageLoading = true
+        usageRateLimited = false
         Task {
-            let data = await UsageAPI.fetch()
-            self.usageData = data
+            let result = await UsageAPI.fetch()
+            switch result {
+            case .success(let data):
+                self.usageData = data
+                self.usageRateLimited = false
+            case .rateLimited:
+                self.usageRateLimited = true
+                // 保留旧数据不清空
+            case .failure:
+                if self.usageData == nil {
+                    self.usageRateLimited = false
+                }
+                // 有旧数据则保留，无旧数据则保持 nil
+            }
             self.usageLoading = false
         }
     }

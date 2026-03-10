@@ -33,7 +33,7 @@ struct DashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Usage Quota
-            UsageSection(usage: store.usageData, loading: store.usageLoading) {
+            UsageSection(usage: store.usageData, loading: store.usageLoading, rateLimited: store.usageRateLimited) {
                 store.loadUsage()
             }
 

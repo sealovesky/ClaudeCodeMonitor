@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 struct UsageLimitInfo: Sendable {
     let utilization: Double
@@ -41,11 +40,28 @@ struct UsageData: Sendable {
     let weekSonnet: UsageLimitInfo?   // seven_day_sonnet
 }
 
+enum UsageFetchResult: Sendable {
+    case success(UsageData)
+    case rateLimited
+    case failure
+}
+
 enum UsageAPI {
     private static let apiURL = "https://api.anthropic.com/api/oauth/usage"
 
-    static func fetch() async -> UsageData? {
-        guard let token = readAccessToken() else { return nil }
+    static func fetch() async -> UsageFetchResult {
+        // 第一次尝试（用缓存的 token）
+        let result = await doFetch()
+        if case .success = result { return result }
+        if case .rateLimited = result { return result }
+
+        // 其他失败，可能 token 过期，清除缓存重试一次（会重新读 Keychain）
+        invalidateTokenCache()
+        return await doFetch()
+    }
+
+    private static func doFetch() async -> UsageFetchResult {
+        guard let token = readAccessToken() else { return .failure }
 
         var request = URLRequest(url: URL(string: apiURL)!)
         request.httpMethod = "GET"
@@ -56,18 +72,20 @@ enum UsageAPI {
         request.timeoutInterval = 5
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200
-        else { return nil }
+              let httpResponse = response as? HTTPURLResponse
+        else { return .failure }
+
+        if httpResponse.statusCode == 429 { return .rateLimited }
+        guard httpResponse.statusCode == 200 else { return .failure }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
+        else { return .failure }
 
-        return UsageData(
+        return .success(UsageData(
             session: parseLimitInfo(json["five_hour"]),
             weekAll: parseLimitInfo(json["seven_day"]),
             weekSonnet: parseLimitInfo(json["seven_day_sonnet"])
-        )
+        ))
     }
 
     private static func parseLimitInfo(_ obj: Any?) -> UsageLimitInfo? {
@@ -80,6 +98,13 @@ enum UsageAPI {
 
     // MARK: - Keychain
 
+    private static let cachedTokenKey = "cachedOAuthToken"
+
+    /// 清除缓存的 token（API 调用失败时调用，下次会重新从 Keychain 读取）
+    static func invalidateTokenCache() {
+        UserDefaults.standard.removeObject(forKey: cachedTokenKey)
+    }
+
     private static func readAccessToken() -> String? {
         // 1. 环境变量
         if let envToken = ProcessInfo.processInfo.environment["CLAUDE_CODE_OAUTH_TOKEN"] {
@@ -91,30 +116,52 @@ enum UsageAPI {
             return fileToken
         }
 
-        // 3. Keychain 兜底（可能触发系统授权弹窗）
-        return readFromKeychain()
+        // 3. 缓存（之前从 Keychain 读取后缓存的 token，永久有效直到 API 失败）
+        if let cached = UserDefaults.standard.string(forKey: cachedTokenKey) {
+            return cached
+        }
+
+        // 4. security CLI 读 Keychain（仅首次或缓存被清除时触发，成功后永久缓存）
+        if let keychainToken = readFromKeychain() {
+            UserDefaults.standard.set(keychainToken, forKey: cachedTokenKey)
+            return keychainToken
+        }
+
+        return nil
     }
 
     private static func readFromKeychain() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
-            kSecAttrAccount as String: NSUserName(),
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+        // 使用 security CLI 读取 Keychain，避免 SecItemCopyMatching 触发系统授权弹窗
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = [
+            "find-generic-password",
+            "-s", "Claude Code-credentials",
+            "-a", NSUserName(),
+            "-w"
         ]
 
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
 
-        // Keychain 存储的是 hex 编码的 JSON
-        guard let hexString = String(data: data, encoding: .utf8) else { return nil }
-        guard let jsonData = hexToData(hexString) else {
-            // 可能不是 hex，直接尝试 JSON
-            return extractToken(from: data)
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
         }
-        return extractToken(from: jsonData)
+
+        guard process.terminationStatus == 0 else { return nil }
+
+        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let jsonString = String(data: outputData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !jsonString.isEmpty
+        else { return nil }
+
+        // security -w 直接返回明文 JSON
+        return extractToken(from: Data(jsonString.utf8))
     }
 
     private static func readFromCredentialsFile() -> String? {
@@ -129,19 +176,5 @@ enum UsageAPI {
               let token = oauth["accessToken"] as? String
         else { return nil }
         return token
-    }
-
-    private static func hexToData(_ hex: String) -> Data? {
-        let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count % 2 == 0 else { return nil }
-        var data = Data(capacity: cleaned.count / 2)
-        var index = cleaned.startIndex
-        while index < cleaned.endIndex {
-            let nextIndex = cleaned.index(index, offsetBy: 2)
-            guard let byte = UInt8(cleaned[index..<nextIndex], radix: 16) else { return nil }
-            data.append(byte)
-            index = nextIndex
-        }
-        return data
     }
 }

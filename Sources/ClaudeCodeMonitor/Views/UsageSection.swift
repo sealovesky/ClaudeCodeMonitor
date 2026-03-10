@@ -3,6 +3,7 @@ import SwiftUI
 struct UsageSection: View {
     let usage: UsageData?
     let loading: Bool
+    let rateLimited: Bool
     let onRefresh: () -> Void
 
     var body: some View {
@@ -11,6 +12,11 @@ struct UsageSection: View {
                 Text("Usage")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+                if rateLimited {
+                    Text("Rate limited, retrying later")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                }
                 Spacer()
                 Button {
                     onRefresh()
