@@ -80,36 +80,58 @@ struct DashboardView: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
 
-            Chart(store.cachedLast7Days) { day in
-                BarMark(
-                    x: .value("Date", day.shortDate),
-                    y: .value("Messages", day.messageCount)
-                )
-                .foregroundStyle(.blue.gradient)
-                .cornerRadius(3)
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading) { value in
-                    AxisValueLabel {
-                        if let intValue = value.as(Int.self) {
-                            Text(TokenFormatter.format(intValue))
-                                .font(.system(size: 9))
+            if store.statsLoading && store.cachedLast7Days.isEmpty {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading...")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(height: 120)
+            } else {
+                Chart(store.cachedLast7Days) { day in
+                    BarMark(
+                        x: .value("Date", day.shortDate),
+                        y: .value("Messages", day.messageCount)
+                    )
+                    .foregroundStyle(.blue.gradient)
+                    .cornerRadius(3)
+                    .annotation(position: .top, spacing: 2) {
+                        Text("\(day.messageCount)")
+                            .font(.system(size: 8, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisValueLabel {
+                            if let intValue = value.as(Int.self) {
+                                Text(TokenFormatter.format(intValue))
+                                    .font(.system(size: 9))
+                            }
                         }
                     }
                 }
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisValueLabel {
-                        if let str = value.as(String.self) {
-                            Text(str)
-                                .font(.system(size: 9))
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisValueLabel {
+                            if let str = value.as(String.self) {
+                                Text(str)
+                                    .font(.system(size: 9))
+                            }
                         }
                     }
                 }
+                .chartYScale(domain: 0 ... max((store.cachedLast7Days.map(\.messageCount).max() ?? 1) * 12 / 10, 1))
+                .frame(height: 120)
+                .padding(.leading, 4)
+                .drawingGroup()
             }
-            .frame(height: 120)
-            .drawingGroup()
 
             // Cumulative Stats
             Divider()

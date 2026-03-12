@@ -10,6 +10,9 @@ enum Constants {
     static let historyPath = claudeDir
         .appendingPathComponent("history.jsonl")
 
+    static let projectsDir = claudeDir
+        .appendingPathComponent("projects")
+
     static let sessionEnvDir = claudeDir
         .appendingPathComponent("session-env")
 

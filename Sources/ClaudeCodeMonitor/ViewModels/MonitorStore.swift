@@ -13,6 +13,7 @@ final class MonitorStore {
     var usageData: UsageData?
     var usageLoading: Bool = false
     var usageRateLimited: Bool = false
+    var statsLoading: Bool = false
 
     // MARK: - Cached computed data (updated only on data reload)
     var latestActivity: DailyActivity?
@@ -28,6 +29,7 @@ final class MonitorStore {
 
     // MARK: - Private
     private let fileMonitor = FileMonitor()
+    private let projectsMonitor = ProjectsMonitor()
     private var debounceTask: Task<Void, Never>?
 
     // MARK: - Computed (cheap)
@@ -76,8 +78,13 @@ final class MonitorStore {
     }
 
     func loadStats() {
-        statsCache = StatsParser.parse()
-        rebuildCachedData()
+        statsLoading = true
+        Task {
+            let cache = await Task.detached { SessionParser.parse() }.value
+            self.statsCache = cache
+            self.rebuildCachedData()
+            self.statsLoading = false
+        }
     }
 
     func loadProjects() {
@@ -168,8 +175,17 @@ final class MonitorStore {
     // MARK: - File Monitoring
 
     private func startFileMonitoring() {
+        // history.jsonl → 项目排行
         fileMonitor.startMonitoring(
-            paths: [Constants.statsCachePath, Constants.historyPath]
+            paths: [Constants.historyPath]
+        ) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.debouncedReload()
+            }
+        }
+        // session JSONL → 统计数据
+        projectsMonitor.startMonitoring(
+            path: Constants.projectsDir.path
         ) { [weak self] in
             Task { @MainActor [weak self] in
                 self?.debouncedReload()

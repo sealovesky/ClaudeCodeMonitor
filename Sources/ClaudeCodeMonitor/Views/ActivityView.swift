@@ -11,42 +11,59 @@ struct ActivityView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Chart(store.cachedLast30Days) { day in
-                AreaMark(
-                    x: .value("Date", day.parsedDate ?? Date()),
-                    y: .value("Messages", day.messageCount)
-                )
-                .foregroundStyle(.blue.opacity(0.1))
+            if store.statsLoading && store.cachedLast30Days.isEmpty {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading...")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(height: 160)
+            } else {
+                Chart(store.cachedLast30Days) { day in
+                    AreaMark(
+                        x: .value("Date", day.parsedDate ?? Date()),
+                        y: .value("Messages", day.messageCount)
+                    )
+                    .foregroundStyle(.blue.opacity(0.1))
 
-                LineMark(
-                    x: .value("Date", day.parsedDate ?? Date()),
-                    y: .value("Messages", day.messageCount)
-                )
-                .foregroundStyle(.blue)
-                .lineStyle(StrokeStyle(lineWidth: 2))
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading) { value in
-                    AxisValueLabel {
-                        if let intValue = value.as(Int.self) {
-                            Text(TokenFormatter.format(intValue))
-                                .font(.system(size: 9))
+                    LineMark(
+                        x: .value("Date", day.parsedDate ?? Date()),
+                        y: .value("Messages", day.messageCount)
+                    )
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                .chartYScale(domain: 0 ... max((store.cachedLast30Days.map(\.messageCount).max() ?? 1) * 12 / 10, 1))
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisValueLabel {
+                            if let intValue = value.as(Int.self) {
+                                Text(TokenFormatter.format(intValue))
+                                    .font(.system(size: 9))
+                            }
                         }
                     }
                 }
-            }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 7)) { value in
-                    AxisValueLabel {
-                        if let date = value.as(Date.self) {
-                            Text(date.formatted(.dateTime.month(.abbreviated).day()))
-                                .font(.system(size: 9))
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(date.formatted(.dateTime.month(.abbreviated).day()))
+                                    .font(.system(size: 9))
+                            }
                         }
                     }
                 }
+                .frame(height: 160)
+                .padding(.leading, 4)
+                .drawingGroup()
             }
-            .frame(height: 160)
-            .drawingGroup()
 
             // 24-Hour Heatmap
             Text("Hourly Distribution")

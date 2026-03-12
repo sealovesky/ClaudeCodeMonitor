@@ -71,8 +71,8 @@ struct UsageSection: View {
     }
 
     private func barColor(_ percent: Int) -> Color {
-        if percent < 50 { return .green }
-        if percent < 80 { return .yellow }
+        if percent < 80 { return .green }
+        if percent < 90 { return .yellow }
         return .red
     }
 }
