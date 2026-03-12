@@ -13,6 +13,7 @@ echo "==> Preparing app bundle..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp .build/arm64-apple-macosx/release/$APP_NAME "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+cp assets/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 echo "==> Signing with: $SIGNING_IDENTITY"
 codesign --force --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
