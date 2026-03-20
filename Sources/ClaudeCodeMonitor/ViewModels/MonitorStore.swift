@@ -28,9 +28,6 @@ final class MonitorStore {
     var yellowThreshold: Int = Constants.yellowThreshold
 
     // MARK: - Private
-    private let fileMonitor = FileMonitor()
-    private let projectsMonitor = ProjectsMonitor()
-    private var debounceTask: Task<Void, Never>?
 
     // MARK: - Computed (cheap)
 
@@ -52,7 +49,6 @@ final class MonitorStore {
         loadProjects()
         countActiveSessions()
         loadUsage()
-        startFileMonitoring()
     }
 
     func loadUsage() {
@@ -169,38 +165,6 @@ final class MonitorStore {
                 .sorted { $0.tokens > $1.tokens }
         } else {
             cachedModelBreakdown = []
-        }
-    }
-
-    // MARK: - File Monitoring
-
-    private func startFileMonitoring() {
-        // history.jsonl → 项目排行
-        fileMonitor.startMonitoring(
-            paths: [Constants.historyPath]
-        ) { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.debouncedReload()
-            }
-        }
-        // session JSONL → 统计数据
-        projectsMonitor.startMonitoring(
-            path: Constants.projectsDir.path
-        ) { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.debouncedReload()
-            }
-        }
-    }
-
-    private func debouncedReload() {
-        debounceTask?.cancel()
-        debounceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            self?.loadStats()
-            self?.loadProjects()
-            self?.countActiveSessions()
         }
     }
 
