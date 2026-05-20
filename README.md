@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  A native macOS menu bar app for monitoring your Claude Code usage and activity stats.
+  A native macOS menu bar + desktop widget app for monitoring your Claude Code usage and activity stats.
 </p>
 
 <p align="center">
@@ -29,9 +29,14 @@
 
 ### Introduction
 
-ClaudeCodeMonitor is a lightweight macOS menu bar application that provides real-time monitoring of your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) usage. It reads local data from `~/.claude/` to display activity stats, token consumption, model distribution, project rankings, and API quota — all without any network overhead.
+ClaudeCodeMonitor is a lightweight macOS menu bar application — with a matching desktop widget — that provides real-time monitoring of your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) usage. It reads local data from `~/.claude/` to display activity stats, token consumption, model distribution, project rankings, and API quota — all without any network overhead beyond the OAuth usage API.
 
 ### Features
+
+#### Desktop Widget (new in v1.3.0)
+- Apple Activity Ring style dual ring: outer 5h quota (threshold-tinted blue/orange/red), inner 7d quota (fixed pink)
+- Three sizes (Small / Medium / Large) with progressively richer info
+- Data delivered to widget via local HTTP loopback (App → `127.0.0.1:53128` → Widget); no network calls from the widget extension itself
 
 #### Dashboard
 - Today's message count, session count, tool calls, and active sessions
@@ -62,6 +67,12 @@ ClaudeCodeMonitor is a lightweight macOS menu bar application that provides real
 ### Screenshots
 
 <p align="center">
+  <img src="assets/screenshots/widget.png" width="720" alt="Desktop Widget (Small / Medium / Large)" />
+  <br/>
+  <em>Desktop widget — three sizes</em>
+</p>
+
+<p align="center">
   <img src="assets/screenshots/dashboard.png" width="420" alt="Dashboard" />
 </p>
 
@@ -83,57 +94,38 @@ ClaudeCodeMonitor is a lightweight macOS menu bar application that provides real
 - macOS 14.0 (Sonoma) or later
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and used at least once
 - Xcode 16.0 or later (for building from source)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- An Apple Developer account (Personal Team is fine, free) — required because the Widget Extension must be signed with a cert that has a real `TeamIdentifier`. Self-signed certs are silently rejected by `chronod`.
 
 #### From Source
 
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/sealovesky/ClaudeCodeMonitor.git
 cd ClaudeCodeMonitor
 
-# Build and run (ad-hoc signing)
-swift run
+# Set up your local signing config (one-time)
+cp project.local.example.yml project.local.yml
+# Edit project.local.yml — fill in your Apple Dev cert CN and Team ID.
+# See comments in that file for how to find them via `security find-identity`.
 
-# Or build a signed app bundle (recommended, avoids Keychain password prompts)
+# One-shot build (regenerates xcodeproj, builds Release, copies to build/)
 ./build.sh
 open build/ClaudeCodeMonitor.app
 ```
 
-> **Note:** `build.sh` requires a local code signing certificate named "ClaudeCodeMonitor Signing". See [Code Signing Setup](#code-signing-setup) below.
+If you'd rather work in Xcode:
+
+```bash
+xcodegen generate
+open ClaudeCodeMonitor.xcodeproj
+```
+
+> **Note:** `project.local.yml` is gitignored — your cert info stays on your machine.
 
 #### Download Release
 
 Check the [Releases](https://github.com/sealovesky/ClaudeCodeMonitor/releases) page for pre-built binaries.
-
-#### Code Signing Setup
-
-To avoid repeated Keychain password prompts when accessing Claude Code's OAuth token, create a self-signed certificate:
-
-```bash
-# Generate certificate (valid for 100 years)
-cat > /tmp/cert.cfg <<'EOF'
-[ req ]
-default_bits       = 2048
-distinguished_name = req_dn
-x509_extensions    = codesign
-[ req_dn ]
-CN = ClaudeCodeMonitor Signing
-[ codesign ]
-keyUsage = digitalSignature
-extendedKeyUsage = codeSigning
-EOF
-
-openssl req -x509 -newkey rsa:2048 -keyout /tmp/signing.key -out /tmp/signing.crt \
-    -days 36500 -nodes -config /tmp/cert.cfg -subj "/CN=ClaudeCodeMonitor Signing"
-
-# Import to login keychain
-security import /tmp/signing.crt -k ~/Library/Keychains/login.keychain-db -t cert
-security import /tmp/signing.key -k ~/Library/Keychains/login.keychain-db -t priv -T /usr/bin/codesign
-
-rm /tmp/cert.cfg /tmp/signing.key /tmp/signing.crt
-```
-
-Then open **Keychain Access**, find the "ClaudeCodeMonitor Signing" certificate, double-click → **Trust** → set **Code Signing** to **Always Trust**.
 
 ### Usage
 
@@ -149,58 +141,54 @@ Then open **Keychain Access**, find the "ClaudeCodeMonitor Signing" certificate,
 
 ClaudeCodeMonitor reads data from your local `~/.claude/` directory:
 
-| File | Data | Purpose |
+| File / Dir | Data | Purpose |
 |------|------|---------|
-| `stats-cache.json` | Daily activity, model tokens, hourly distribution | Dashboard, Activity, Models |
+| `projects/<project>/*.jsonl` | Session message streams (parsed by `SessionParser`) | Today stats, 7d / 30d trends, model breakdown, hourly heatmap |
 | `history.jsonl` | Prompt history with project and session info | Projects ranking |
 | `session-env/` | Active session directories | Active session count |
 
-For API quota display, it reads your OAuth token from Keychain (set by Claude Code) and queries the Anthropic usage API.
+For API quota display, the app reads your OAuth token from `~/.claude/.credentials.json` (or Keychain via the `security` CLI as fallback) and queries the Anthropic usage API every 30 minutes.
 
-**No data is collected or sent anywhere.** Everything stays local.
+**Widget data flow:** App ↔ Widget extension talk via local HTTP loopback (`127.0.0.1:53128`), not App Group files. This avoids the TCC `SystemPolicyAppData` restriction that silently blocks widgets from reading other-process output on macOS Sonoma+. The widget extension itself makes zero external network calls — it only fetches from the in-app server.
+
+**No data is collected or sent anywhere outside Anthropic's official OAuth endpoint.** Everything else stays local.
 
 ### Project Structure
 
 ```
 ClaudeCodeMonitor/
-├── Package.swift                    # Swift Package configuration
-├── build.sh                         # Build & sign script
-├── ClaudeCodeMonitor.entitlements   # App entitlements
-├── Sources/ClaudeCodeMonitor/
-│   ├── App/
-│   │   └── ClaudeCodeMonitorApp.swift   # @main entry, MenuBarExtra
-│   ├── Models/
-│   │   ├── StatsCache.swift             # stats-cache.json Codable model
-│   │   ├── HistoryEntry.swift           # history.jsonl line model
-│   │   └── ProjectStats.swift           # Aggregated project statistics
-│   ├── Services/
-│   │   ├── FileMonitor.swift            # DispatchSource file watcher
-│   │   ├── StatsParser.swift            # JSON parser for stats-cache
-│   │   ├── HistoryParser.swift          # JSONL parser for history
-│   │   └── UsageAPI.swift               # Anthropic OAuth usage API
-│   ├── ViewModels/
-│   │   └── MonitorStore.swift           # @Observable global state
-│   ├── Views/
-│   │   ├── MenuBarView.swift            # Popover root with tab navigation
-│   │   ├── DashboardView.swift          # Today stats + 7-day chart
-│   │   ├── ActivityView.swift           # 30-day chart + hour heatmap
-│   │   ├── ModelsView.swift             # Donut chart + token breakdown
-│   │   ├── ProjectsView.swift           # Project ranking list
-│   │   ├── UsageSection.swift           # API quota progress bars
-│   │   └── SettingsView.swift           # Settings window
-│   └── Utilities/
-│       ├── Constants.swift              # Paths, sizes, color thresholds
-│       ├── TokenFormatter.swift         # Token number formatting (K/M/B)
-│       └── LaunchAtLogin.swift          # SMAppService wrapper
+├── project.yml                      # XcodeGen config (run `xcodegen generate`)
+├── project.local.example.yml        # Local signing config template (copy to project.local.yml)
+├── build.sh                         # One-shot xcodegen + xcodebuild + sign
+├── ClaudeCodeMonitor.entitlements   # App entitlements (currently empty — App is not sandboxed)
+├── Sources/
+│   ├── ClaudeCodeMonitor/           # Main app target
+│   │   ├── App/ClaudeCodeMonitorApp.swift     # @main entry, MenuBarExtra
+│   │   ├── Models/                            # Codable types (StatsCache, HistoryEntry, ProjectStats)
+│   │   ├── Services/
+│   │   │   ├── SessionParser.swift            # JSONL parser for ~/.claude/projects/
+│   │   │   ├── HistoryParser.swift            # JSONL parser for history.jsonl
+│   │   │   ├── UsageAPI.swift                 # Anthropic OAuth usage API
+│   │   │   └── SnapshotHTTPServer.swift       # 127.0.0.1:53128 server (NWListener)
+│   │   ├── ViewModels/MonitorStore.swift      # @Observable global state + 30 min OAuth timer
+│   │   ├── Views/                             # Dashboard / Activity / Models / Projects / Usage / Settings
+│   │   └── Utilities/                         # Constants / TokenFormatter / LaunchAtLogin
+│   ├── ClaudeCodeMonitorWidget/     # Widget Extension target (sandboxed)
+│   │   ├── ClaudeCodeMonitorWidget.swift      # @main, three families, dual ring visual
+│   │   ├── SnapshotLoader.swift               # URLSession sync GET to 127.0.0.1:53128
+│   │   └── ClaudeCodeMonitorWidget.entitlements  # sandbox + network.client
+│   └── Shared/                      # Code visible to both targets
+│       └── WidgetSnapshot.swift               # Codable model + loopback constants
+└── assets/AppIcon.icns
 ```
 
 ### Tech Stack
 
-- **UI Framework**: SwiftUI + MenuBarExtra (`.window` style)
+- **UI**: SwiftUI + MenuBarExtra (`.window` style) + WidgetKit
 - **Charts**: Swift Charts (BarMark, LineMark, SectorMark)
-- **File Monitoring**: DispatchSource (GCD)
+- **App ↔ Widget IPC**: Local HTTP loopback via `Network.framework` (NWListener + URLSession)
 - **State Management**: @Observable (Observation framework)
-- **Auth**: Keychain Services (read Claude Code OAuth token)
+- **Auth**: OAuth token from `~/.claude/.credentials.json` or Keychain (via `security` CLI)
 - **Launch at Login**: SMAppService
 
 ### Roadmap
@@ -213,6 +201,7 @@ ClaudeCodeMonitor/
 - [x] Real-time API quota display
 - [x] Launch at login
 - [x] Customizable usage thresholds
+- [x] Desktop widget (Small / Medium / Large) **— v1.3.0**
 - [ ] Notification when approaching rate limit
 - [ ] Export usage report (CSV/JSON)
 - [ ] Historical quota tracking
@@ -230,9 +219,14 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ### 简介
 
-ClaudeCodeMonitor 是一款轻量级的 macOS 菜单栏应用，用于实时监控 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 的使用情况。它读取 `~/.claude/` 目录下的本地数据，展示活动统计、Token 消耗、模型分布、项目排行和 API 配额，无需额外网络开销。
+ClaudeCodeMonitor 是一款轻量级的 macOS 菜单栏应用，配套桌面 widget，用于实时监控 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 的使用情况。它读取 `~/.claude/` 目录下的本地数据，展示活动统计、Token 消耗、模型分布、项目排行和 API 配额，除 OAuth 用量接口外无网络请求。
 
 ### 功能特性
+
+#### 桌面 Widget（v1.3.0 新增）
+- Apple Activity Ring 风格双环：外环 5h 配额（按阈值变蓝/橙/红），内环 7d 配额（固定粉色）
+- 三种尺寸（Small / Medium / Large），信息密度递增
+- App ↔ Widget 通过本地 HTTP loopback（`127.0.0.1:53128`）传数据，widget 自身不发任何外网请求
 
 #### 仪表板
 - 今日消息数、会话数、工具调用次数、活跃会话数
@@ -263,6 +257,12 @@ ClaudeCodeMonitor 是一款轻量级的 macOS 菜单栏应用，用于实时监�
 ### 截图
 
 <p align="center">
+  <img src="assets/screenshots/widget.png" width="720" alt="桌面 Widget（Small / Medium / Large）" />
+  <br/>
+  <em>桌面 widget 三种尺寸</em>
+</p>
+
+<p align="center">
   <img src="assets/screenshots/dashboard.png" width="420" alt="仪表板" />
 </p>
 
@@ -280,23 +280,34 @@ ClaudeCodeMonitor 是一款轻量级的 macOS 菜单栏应用，用于实时监�
 - macOS 14.0 (Sonoma) 或更高版本
 - 已安装并使用过 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 - Xcode 16.0 或更高版本（从源码构建）
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen)（`brew install xcodegen`）
+- Apple Developer 账号（个人 Team 免费即可）—— Widget Extension 必须用带 `TeamIdentifier` 的证书签名，自签证书 `chronod` 会静默拒绝加载
 
 #### 从源码构建
 
 ```bash
-# 克隆仓库
+# 克隆
 git clone https://github.com/sealovesky/ClaudeCodeMonitor.git
 cd ClaudeCodeMonitor
 
-# 构建运行（ad-hoc 签名）
-swift run
+# 配置本地签名（一次性）
+cp project.local.example.yml project.local.yml
+# 编辑 project.local.yml，填入自己的 Apple Dev 证书 CN 和 Team ID
+# 文件里有注释告诉你怎么用 security find-identity 查
 
-# 或构建签名的 app bundle（推荐，避免 Keychain 反复弹密码框）
+# 一键构建（regenerate xcodeproj + xcodebuild Release + 拷贝到 build/）
 ./build.sh
 open build/ClaudeCodeMonitor.app
 ```
 
-> **注意：** `build.sh` 需要一个名为 "ClaudeCodeMonitor Signing" 的本地代码签名证书。请参考上方英文部分的 [Code Signing Setup](#code-signing-setup) 创建证书。
+更喜欢用 Xcode：
+
+```bash
+xcodegen generate
+open ClaudeCodeMonitor.xcodeproj
+```
+
+> **注意：** `project.local.yml` 已 gitignore，证书信息只留在你本地。
 
 #### 下载发布版
 
@@ -316,58 +327,54 @@ open build/ClaudeCodeMonitor.app
 
 ClaudeCodeMonitor 读取本地 `~/.claude/` 目录下的数据：
 
-| 文件 | 数据 | 用途 |
+| 文件 / 目录 | 数据 | 用途 |
 |------|------|------|
-| `stats-cache.json` | 每日活动、模型 Token、小时分布 | 仪表板、活动、模型 |
+| `projects/<project>/*.jsonl` | 各项目 session 消息流（`SessionParser` 解析） | 今日统计、7/30 天趋势、模型分布、小时热力图 |
 | `history.jsonl` | 提示词历史（项目、会话信息） | 项目排行 |
 | `session-env/` | 活跃会话目录 | 活跃会话计数 |
 
-API 配额显示通过读取 Keychain 中的 OAuth Token（由 Claude Code 设置）查询 Anthropic 用量 API。
+API 配额显示通过读取 `~/.claude/.credentials.json`（或 Keychain via `security` CLI 兜底）的 OAuth Token，每 30 分钟查询一次 Anthropic 用量 API。
 
-**不收集或发送任何数据。** 一切都在本地完成。
+**Widget 数据流**：App ↔ Widget Extension 间通过本地 HTTP loopback（`127.0.0.1:53128`）传数据，不走 App Group 文件。规避 macOS Sonoma+ TCC `SystemPolicyAppData` 静默禁止 widget 读取其他进程产物的限制。Widget Extension 自身不发任何外网请求，只从 App 内嵌 server 拿数据。
+
+**不向 Anthropic 官方 OAuth 接口以外的任何地方发送数据。** 其他一切都在本地完成。
 
 ### 项目结构
 
 ```
 ClaudeCodeMonitor/
-├── Package.swift                    # Swift Package 配置
-├── build.sh                         # 构建 & 签名脚本
-├── ClaudeCodeMonitor.entitlements   # 应用权限声明
-├── Sources/ClaudeCodeMonitor/
-│   ├── App/
-│   │   └── ClaudeCodeMonitorApp.swift   # @main 入口, MenuBarExtra
-│   ├── Models/
-│   │   ├── StatsCache.swift             # stats-cache.json 数据模型
-│   │   ├── HistoryEntry.swift           # history.jsonl 行模型
-│   │   └── ProjectStats.swift           # 项目聚合统计
-│   ├── Services/
-│   │   ├── FileMonitor.swift            # DispatchSource 文件监控
-│   │   ├── StatsParser.swift            # stats-cache JSON 解析器
-│   │   ├── HistoryParser.swift          # history JSONL 解析器
-│   │   └── UsageAPI.swift               # Anthropic OAuth 用量 API
-│   ├── ViewModels/
-│   │   └── MonitorStore.swift           # @Observable 全局状态管理
-│   ├── Views/
-│   │   ├── MenuBarView.swift            # Popover 根视图 + Tab 导航
-│   │   ├── DashboardView.swift          # 今日统计 + 7天柱状图
-│   │   ├── ActivityView.swift           # 30天折线图 + 小时热力图
-│   │   ├── ModelsView.swift             # 甜甜圈图 + Token 分布
-│   │   ├── ProjectsView.swift           # 项目排行列表
-│   │   ├── UsageSection.swift           # API 配额进度条
-│   │   └── SettingsView.swift           # 设置窗口
-│   └── Utilities/
-│       ├── Constants.swift              # 路径、尺寸、颜色阈值
-│       ├── TokenFormatter.swift         # Token 数字格式化 (K/M/B)
-│       └── LaunchAtLogin.swift          # SMAppService 封装
+├── project.yml                      # XcodeGen 配置（改完跑 xcodegen generate）
+├── project.local.example.yml        # 本地签名配置模板（拷为 project.local.yml）
+├── build.sh                         # 一键 xcodegen + xcodebuild + 签名
+├── ClaudeCodeMonitor.entitlements   # App entitlements（当前空 — App 不沙盒）
+├── Sources/
+│   ├── ClaudeCodeMonitor/           # 主 App target
+│   │   ├── App/ClaudeCodeMonitorApp.swift     # @main 入口，MenuBarExtra
+│   │   ├── Models/                            # Codable 类型 (StatsCache, HistoryEntry, ProjectStats)
+│   │   ├── Services/
+│   │   │   ├── SessionParser.swift            # ~/.claude/projects/ JSONL 解析器
+│   │   │   ├── HistoryParser.swift            # history.jsonl 解析器
+│   │   │   ├── UsageAPI.swift                 # Anthropic OAuth 用量 API
+│   │   │   └── SnapshotHTTPServer.swift       # 127.0.0.1:53128 server (NWListener)
+│   │   ├── ViewModels/MonitorStore.swift      # @Observable 全局状态 + 30 分钟 OAuth timer
+│   │   ├── Views/                             # Dashboard / Activity / Models / Projects / Usage / Settings
+│   │   └── Utilities/                         # Constants / TokenFormatter / LaunchAtLogin
+│   ├── ClaudeCodeMonitorWidget/     # Widget Extension target（沙盒）
+│   │   ├── ClaudeCodeMonitorWidget.swift      # @main, 三档 family, 双环视觉
+│   │   ├── SnapshotLoader.swift               # 同步 URLSession GET 127.0.0.1:53128
+│   │   └── ClaudeCodeMonitorWidget.entitlements  # sandbox + network.client
+│   └── Shared/                      # 两个 target 共享代码
+│       └── WidgetSnapshot.swift               # Codable 模型 + loopback 常量
+└── assets/AppIcon.icns
 ```
 
 ### 技术栈
 
-- **UI 框架**: SwiftUI + MenuBarExtra (`.window` 风格)
+- **UI**: SwiftUI + MenuBarExtra (`.window` 风格) + WidgetKit
 - **图表**: Swift Charts (BarMark, LineMark, SectorMark)
-- **文件监控**: DispatchSource (GCD)
+- **App ↔ Widget IPC**: 本地 HTTP loopback (Network.framework: NWListener + URLSession)
 - **状态管理**: @Observable (Observation 框架)
-- **认证**: Keychain Services（读取 Claude Code OAuth Token）
+- **认证**: OAuth Token 来自 `~/.claude/.credentials.json` 或 Keychain（via `security` CLI）
 - **开机启动**: SMAppService
 
 ### 开发计划
@@ -380,6 +387,7 @@ ClaudeCodeMonitor/
 - [x] 实时 API 配额展示
 - [x] 开机自启动
 - [x] 自定义用量阈值
+- [x] 桌面 widget（Small / Medium / Large）**— v1.3.0**
 - [ ] 接近限额时推送通知
 - [ ] 导出使用报告 (CSV/JSON)
 - [ ] 历史配额追踪
