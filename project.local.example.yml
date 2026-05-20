@@ -1,0 +1,22 @@
+# 本地签名配置模板
+#
+# 第一次 clone 时：
+#   cp project.local.example.yml project.local.yml
+# 然后用你自己的 Apple Developer cert 信息填下面两行
+#
+# 查询自己的 cert：
+#   security find-identity -p codesigning -v
+# 取格如 "Apple Development: <Your Name> (XXXXXXXXXX)" 的那一行
+#
+# 查询 Team ID：
+#   security find-certificate -c "Apple Development: <Your Name> (XXXXXXXXXX)" -p \
+#     | openssl x509 -text -noout | grep OU=
+# OU= 后面就是 Team ID
+#
+# Widget Extension 必须有合法的 TeamIdentifier 才能被 chronod 加载，
+# 自签证书（ClaudeCodeMonitor Signing 之类）不行。
+
+settings:
+  base:
+    CODE_SIGN_IDENTITY: "Apple Development: YOUR NAME (XXXXXXXXXX)"
+    DEVELOPMENT_TEAM: XXXXXXXXXX

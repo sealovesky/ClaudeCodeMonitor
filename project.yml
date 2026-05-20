@@ -1,0 +1,97 @@
+name: ClaudeCodeMonitor
+
+# 本地签名配置从 project.local.yml 引入（gitignored）
+# 第一次 clone 后请：cp project.local.example.yml project.local.yml 并填入自己的 cert/team
+include:
+  - path: project.local.yml
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  bundleIdPrefix: com.sealovesky
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.3.0"
+    CURRENT_PROJECT_VERSION: "4"
+    # Widget Extension 必须有合法 TeamIdentifier 才能被 chronod 加载（自签证书不行）
+    # CODE_SIGN_IDENTITY / DEVELOPMENT_TEAM 在 project.local.yml 里指定
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+
+targets:
+  ClaudeCodeMonitor:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/ClaudeCodeMonitor
+        excludes:
+          - "Info.plist"
+          - ".DS_Store"
+      - path: Sources/Shared
+      - path: assets/AppIcon.icns
+        buildPhase: resources
+    info:
+      path: Sources/ClaudeCodeMonitor/Info.plist
+      properties:
+        CFBundleDisplayName: ClaudeCodeMonitor
+        CFBundleName: ClaudeCodeMonitor
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: YES
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "© 2026 sealovesky"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sealovesky.claudecodemonitor
+        GENERATE_INFOPLIST_FILE: NO
+        # App 不沙盒：实测 sandbox + home-relative-path 例外仍无法 readdir(~/.claude/projects/)
+        # Widget Gallery 显示的真正修复是 pluginkit 路径刷新（详见 memory），不是 sandbox
+        # Widget Extension 自己保持沙盒（Apple 强制）
+        ENABLE_APP_SANDBOX: NO
+    entitlements:
+      path: ClaudeCodeMonitor.entitlements
+      properties: {}
+    dependencies:
+      - target: ClaudeCodeMonitorWidget
+        embed: true
+
+  ClaudeCodeMonitorWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/ClaudeCodeMonitorWidget
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: Sources/Shared
+    info:
+      path: Sources/ClaudeCodeMonitorWidget/Info.plist
+      properties:
+        CFBundleDisplayName: ClaudeCodeMonitorWidget
+        CFBundleName: ClaudeCodeMonitorWidget
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sealovesky.claudecodemonitor.widget
+        GENERATE_INFOPLIST_FILE: NO
+        # Widget Extension 强制沙盒
+        ENABLE_APP_SANDBOX: YES
+    entitlements:
+      path: Sources/ClaudeCodeMonitorWidget/ClaudeCodeMonitorWidget.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        # 走 localhost HTTP 拉 App 投递的数据
+        com.apple.security.network.client: true

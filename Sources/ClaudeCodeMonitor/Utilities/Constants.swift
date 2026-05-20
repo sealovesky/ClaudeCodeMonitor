@@ -1,7 +1,13 @@
 import Foundation
 
 enum Constants {
-    static let claudeDir = FileManager.default.homeDirectoryForCurrentUser
+    /// 沙盒下 FileManager.homeDirectoryForCurrentUser 和 NSHomeDirectoryForUser
+    /// 都返回 container home。直接拼 /Users/<username>/ 绕开
+    private static let realHome: URL = {
+        URL(fileURLWithPath: "/Users/\(NSUserName())")
+    }()
+
+    static let claudeDir = realHome
         .appendingPathComponent(".claude")
 
     static let statsCachePath = claudeDir

@@ -190,7 +190,6 @@ enum SessionParser {
         ) else { return result }
 
         for case let fileURL as URL in enumerator {
-            // 跳过 subagents 目录
             if fileURL.path.contains("/subagents/") {
                 continue
             }

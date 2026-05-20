@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import WidgetKit
 
 @Observable
 @MainActor
@@ -14,6 +15,16 @@ final class MonitorStore {
     var usageLoading: Bool = false
     var usageRateLimited: Bool = false
     var statsLoading: Bool = false
+
+    // MARK: - Widget loopback
+    private let httpServer = SnapshotHTTPServer()
+    private var quotaRefreshTimer: Timer?
+    /// 后台刷 OAuth 配额的频率：30 分钟（一天 ~48 次，保守且足够）
+    private let quotaRefreshInterval: TimeInterval = 30 * 60
+    /// 节流：60 秒内 loadUsage 只真实调一次 API
+    /// 防止频繁开关菜单栏打爆 OAuth rate limit（429）
+    private let usageMinInterval: TimeInterval = 60
+    private var lastUsageFetchAt: Date?
 
     // MARK: - Cached computed data (updated only on data reload)
     var latestActivity: DailyActivity?
@@ -42,6 +53,18 @@ final class MonitorStore {
 
     var totalDays: Int { totalUniqueDayCount }
 
+    // MARK: - Init / Bootstrap
+
+    init() {
+        // App 启动即起 HTTP server + 首次加载数据 + 定时刷 OAuth 配额
+        // 不依赖菜单栏打开（widget 必须能在 App 启动后立刻拿到数据）
+        httpServer.start()
+        loadAll()
+        quotaRefreshTimer = Timer.scheduledTimer(withTimeInterval: quotaRefreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.loadUsage() }
+        }
+    }
+
     // MARK: - Actions
 
     func loadAll() {
@@ -52,6 +75,12 @@ final class MonitorStore {
     }
 
     func loadUsage() {
+        // 节流：60 秒内不重复调（首次调用 lastUsageFetchAt 为 nil，放行）
+        if let last = lastUsageFetchAt,
+           Date().timeIntervalSince(last) < usageMinInterval {
+            return
+        }
+        lastUsageFetchAt = Date()
         usageLoading = true
         usageRateLimited = false
         Task {
@@ -70,6 +99,7 @@ final class MonitorStore {
                 // 有旧数据则保留，无旧数据则保持 nil
             }
             self.usageLoading = false
+            self.publishToWidget()
         }
     }
 
@@ -80,6 +110,7 @@ final class MonitorStore {
             self.statsCache = cache
             self.rebuildCachedData()
             self.statsLoading = false
+            self.publishToWidget()
         }
     }
 
@@ -176,5 +207,49 @@ final class MonitorStore {
         if name.contains("haiku") { return "Haiku" }
         if name.contains("glm") { return "GLM" }
         return name
+    }
+
+    // MARK: - Widget loopback publish
+
+    /// 把当前状态打包成 WidgetSnapshot 推给 HTTP server，并通知 WidgetKit 刷 timeline
+    private func publishToWidget() {
+        let snapshot = buildWidgetSnapshot()
+        httpServer.update(snapshot)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func buildWidgetSnapshot() -> WidgetSnapshot {
+        let usage = usageData.map { data in
+            UsageSnapshot(
+                fiveHourPct: data.session?.utilization ?? 0,
+                fiveHourResetsAt: data.session.flatMap { Self.parseISO($0.resetsAt) },
+                sevenDayPct: data.weekAll?.utilization ?? 0,
+                sevenDayResetsAt: data.weekAll.flatMap { Self.parseISO($0.resetsAt) },
+                sevenDaySonnetPct: data.weekSonnet?.utilization ?? 0,
+                sevenDaySonnetResetsAt: data.weekSonnet.flatMap { Self.parseISO($0.resetsAt) }
+            )
+        }
+        let last7 = cachedLast7Days.map { DailyBar(date: $0.shortDate, messageCount: $0.messageCount) }
+        let activity = ActivitySnapshot(
+            todayMessages: latestActivity?.messageCount ?? 0,
+            todaySessions: latestActivity?.sessionCount ?? 0,
+            activeSessionCount: activeSessionCount,
+            last7Days: last7
+        )
+        return WidgetSnapshot(
+            generatedAt: Date(),
+            usage: usage,
+            activity: activity,
+            rateLimited: usageRateLimited
+        )
+    }
+
+    private static func parseISO(_ s: String) -> Date? {
+        let f1 = ISO8601DateFormatter()
+        f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f1.date(from: s) { return d }
+        let f2 = ISO8601DateFormatter()
+        f2.formatOptions = [.withInternetDateTime]
+        return f2.date(from: s)
     }
 }
