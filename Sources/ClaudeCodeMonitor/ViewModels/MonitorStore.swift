@@ -19,9 +19,10 @@ final class MonitorStore {
 
     // MARK: - Widget loopback
     private let httpServer = SnapshotHTTPServer()
-    private var quotaRefreshTimer: Timer?
-    /// 后台刷 OAuth 配额的频率：30 分钟（一天 ~48 次，保守且足够）
-    private let quotaRefreshInterval: TimeInterval = 30 * 60
+    private var refreshTimer: Timer?
+    /// 后台刷新频率 30 分钟 — 同时刷 OAuth 配额 + SessionParser 活动统计
+    /// 隐藏 menubar icon 后这是 widget 数据更新的唯一来源（没有菜单栏 onAppear 兜底）
+    private let refreshInterval: TimeInterval = 30 * 60
     /// 节流：60 秒内 loadUsage 只真实调一次 API
     /// 防止频繁开关菜单栏打爆 OAuth rate limit（429）
     private let usageMinInterval: TimeInterval = 60
@@ -66,8 +67,8 @@ final class MonitorStore {
         // 不依赖菜单栏打开（widget 必须能在 App 启动后立刻拿到数据）
         httpServer.start()
         loadAll()
-        quotaRefreshTimer = Timer.scheduledTimer(withTimeInterval: quotaRefreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.loadUsage() }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.loadAll() }
         }
         // 监听双击 .app 触发的 reopen — 临时强显菜单栏 60 秒，让用户能找回 Settings
         NotificationCenter.default.publisher(for: .ccmReopenRequested)
