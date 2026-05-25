@@ -18,8 +18,8 @@ enum MonitorTab: String, CaseIterable {
 
 struct MenuBarView: View {
     @Environment(MonitorStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
     @State private var selectedTab: MonitorTab = .dashboard
-    @State private var showSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +31,7 @@ struct MenuBarView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    showSettings.toggle()
+                    openSettings()
                 } label: {
                     Image(systemName: "gearshape")
                         .foregroundStyle(.secondary)
@@ -91,9 +91,20 @@ struct MenuBarView: View {
         .onAppear {
             store.loadAll()
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-                .environment(store)
+    }
+
+    private func openSettings() {
+        // LSUIElement App 在 .accessory 模式下 NSApp.activate 不生效。
+        // 之前尝试临时切 .regular，但 policy 切换会重置 NSApp 内部 state，
+        // 让 MenuBarExtra 的 isInserted binding 失灵（hide 操作不生效）。
+        // 改用 NSWindow.level = .floating —— 不动 activation policy，只让窗口浮顶。
+        openWindow(id: "ccm-settings")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            for win in NSApp.windows where win.title.contains("ClaudeCodeMonitor Settings") {
+                win.level = .floating
+                win.makeKeyAndOrderFront(nil)
+                win.orderFrontRegardless()
+            }
         }
     }
 }

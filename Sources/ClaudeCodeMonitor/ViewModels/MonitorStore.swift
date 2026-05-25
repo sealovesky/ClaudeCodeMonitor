@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import WidgetKit
+import Combine
 
 @Observable
 @MainActor
@@ -38,6 +39,11 @@ final class MonitorStore {
     var greenThreshold: Int = Constants.greenThreshold
     var yellowThreshold: Int = Constants.yellowThreshold
 
+    /// 菜单栏图标临时强显（reopen 后 60 秒，让用户能再次看到 icon 进 Settings）
+    var temporaryMenuBarShow: Bool = false
+
+    private var cancellables = Set<AnyCancellable>()
+
     // MARK: - Private
 
     // MARK: - Computed (cheap)
@@ -62,6 +68,22 @@ final class MonitorStore {
         loadAll()
         quotaRefreshTimer = Timer.scheduledTimer(withTimeInterval: quotaRefreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.loadUsage() }
+        }
+        // 监听双击 .app 触发的 reopen — 临时强显菜单栏 60 秒，让用户能找回 Settings
+        NotificationCenter.default.publisher(for: .ccmReopenRequested)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleReopen()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleReopen() {
+        // reopen 只强显 icon 60 秒，不自动弹 Settings
+        // user 看到 icon 自己决定点开看 dashboard 还是齿轮进 Settings
+        temporaryMenuBarShow = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+            self?.temporaryMenuBarShow = false
         }
     }
 
