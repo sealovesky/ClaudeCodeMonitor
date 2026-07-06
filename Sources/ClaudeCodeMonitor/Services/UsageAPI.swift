@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 struct UsageLimitInfo: Sendable {
     let utilization: Double
@@ -42,18 +43,24 @@ struct UsageData: Sendable {
 
 enum UsageFetchResult: Sendable {
     case success(UsageData)
-    case rateLimited
+    case rateLimited(retryAfter: TimeInterval?)
     case failure
 }
 
 enum UsageAPI {
     private static let apiURL = "https://api.anthropic.com/api/oauth/usage"
+    private static let log = Logger(subsystem: "com.sealovesky.ClaudeCodeMonitor", category: "UsageAPI")
 
     static func fetch() async -> UsageFetchResult {
         // 第一次尝试（用缓存的 token）
         let result = await doFetch()
         if case .success = result { return result }
-        if case .rateLimited = result { return result }
+        if case .rateLimited = result {
+            // 429 也清缓存：限流期间 token 可能过期，若不清，服务端对反复出现的
+            // 无效 token 持续回 429，会卡死在「过期 token → 429 → 不换 token」循环
+            invalidateTokenCache()
+            return result
+        }
 
         // 其他失败，可能 token 过期，清除缓存重试一次（会重新读 Keychain）
         invalidateTokenCache()
@@ -61,7 +68,10 @@ enum UsageAPI {
     }
 
     private static func doFetch() async -> UsageFetchResult {
-        guard let token = readAccessToken() else { return .failure }
+        guard let (token, source) = readAccessToken() else {
+            log.warning("no usable token (all sources empty or expired)")
+            return .failure
+        }
 
         var request = URLRequest(url: URL(string: apiURL)!)
         request.httpMethod = "GET"
@@ -73,9 +83,19 @@ enum UsageAPI {
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let httpResponse = response as? HTTPURLResponse
-        else { return .failure }
+        else {
+            log.warning("request failed (transport), token source: \(source, privacy: .public)")
+            return .failure
+        }
 
-        if httpResponse.statusCode == 429 { return .rateLimited }
+        log.info("status \(httpResponse.statusCode, privacy: .public), token source: \(source, privacy: .public), token suffix: \(String(token.suffix(6)), privacy: .public)")
+
+        if httpResponse.statusCode == 429 {
+            let retryAfter = (httpResponse.value(forHTTPHeaderField: "Retry-After"))
+                .flatMap { TimeInterval($0) }
+            log.warning("rate limited, Retry-After: \(retryAfter.map { "\($0)s" } ?? "none", privacy: .public)")
+            return .rateLimited(retryAfter: retryAfter)
+        }
         guard httpResponse.statusCode == 200 else { return .failure }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -99,38 +119,53 @@ enum UsageAPI {
     // MARK: - Keychain
 
     private static let cachedTokenKey = "cachedOAuthToken"
+    private static let cachedTokenExpiryKey = "cachedOAuthTokenExpiry"
 
     /// 清除缓存的 token（API 调用失败时调用，下次会重新从 Keychain 读取）
     static func invalidateTokenCache() {
         UserDefaults.standard.removeObject(forKey: cachedTokenKey)
+        UserDefaults.standard.removeObject(forKey: cachedTokenExpiryKey)
     }
 
-    private static func readAccessToken() -> String? {
+    /// expiresAt 为毫秒时间戳；留 60 秒余量，即将过期的 token 视为不可用
+    private static func isUsable(expiresAtMillis: Double?) -> Bool {
+        guard let ms = expiresAtMillis else { return true }  // 无过期信息则乐观使用
+        return ms / 1000 > Date().timeIntervalSince1970 + 60
+    }
+
+    private static func readAccessToken() -> (token: String, source: String)? {
         // 1. 环境变量
         if let envToken = ProcessInfo.processInfo.environment["CLAUDE_CODE_OAUTH_TOKEN"] {
-            return envToken
+            return (envToken, "env")
         }
 
         // 2. 文件优先（不会触发系统授权弹窗）
-        if let fileToken = readFromCredentialsFile() {
-            return fileToken
+        if let cred = readFromCredentialsFile(), isUsable(expiresAtMillis: cred.expiresAt) {
+            return (cred.token, "file")
         }
 
-        // 3. 缓存（之前从 Keychain 读取后缓存的 token，永久有效直到 API 失败）
+        // 3. 缓存（之前从 Keychain 读取后缓存的 token，过期即弃用）
         if let cached = UserDefaults.standard.string(forKey: cachedTokenKey) {
-            return cached
+            let expiry = UserDefaults.standard.object(forKey: cachedTokenExpiryKey) as? Double
+            if isUsable(expiresAtMillis: expiry) {
+                return (cached, "cache")
+            }
+            invalidateTokenCache()
         }
 
-        // 4. security CLI 读 Keychain（仅首次或缓存被清除时触发，成功后永久缓存）
-        if let keychainToken = readFromKeychain() {
-            UserDefaults.standard.set(keychainToken, forKey: cachedTokenKey)
-            return keychainToken
+        // 4. security CLI 读 Keychain（仅首次或缓存失效时触发，成功后缓存 token + 过期时间）
+        if let cred = readFromKeychain(), isUsable(expiresAtMillis: cred.expiresAt) {
+            UserDefaults.standard.set(cred.token, forKey: cachedTokenKey)
+            if let exp = cred.expiresAt {
+                UserDefaults.standard.set(exp, forKey: cachedTokenExpiryKey)
+            }
+            return (cred.token, "keychain")
         }
 
         return nil
     }
 
-    private static func readFromKeychain() -> String? {
+    private static func readFromKeychain() -> (token: String, expiresAt: Double?)? {
         // 使用 security CLI 读取 Keychain，避免 SecItemCopyMatching 触发系统授权弹窗
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -164,17 +199,17 @@ enum UsageAPI {
         return extractToken(from: Data(jsonString.utf8))
     }
 
-    private static func readFromCredentialsFile() -> String? {
+    private static func readFromCredentialsFile() -> (token: String, expiresAt: Double?)? {
         let path = Constants.claudeDir.appendingPathComponent(".credentials.json")
         guard let data = try? Data(contentsOf: path) else { return nil }
         return extractToken(from: data)
     }
 
-    private static func extractToken(from data: Data) -> String? {
+    private static func extractToken(from data: Data) -> (token: String, expiresAt: Double?)? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String
         else { return nil }
-        return token
+        return (token, oauth["expiresAt"] as? Double)
     }
 }

@@ -23,10 +23,12 @@ final class MonitorStore {
     /// 后台刷新频率 30 分钟 — 同时刷 OAuth 配额 + SessionParser 活动统计
     /// 隐藏 menubar icon 后这是 widget 数据更新的唯一来源（没有菜单栏 onAppear 兜底）
     private let refreshInterval: TimeInterval = 30 * 60
-    /// 节流：60 秒内 loadUsage 只真实调一次 API
-    /// 防止频繁开关菜单栏打爆 OAuth rate limit（429）
-    private let usageMinInterval: TimeInterval = 60
+    /// 节流：300 秒内 loadUsage 只真实调一次 API
+    /// 防止频繁开关菜单栏打爆 OAuth rate limit（429）；配额百分比变化慢，5 分钟粒度足够
+    private let usageMinInterval: TimeInterval = 300
     private var lastUsageFetchAt: Date?
+    /// 429 退避：此时刻之前不再发起请求（取 Retry-After 与 15 分钟的较大者）
+    private var usageBackoffUntil: Date?
 
     // MARK: - Cached computed data (updated only on data reload)
     var latestActivity: DailyActivity?
@@ -98,7 +100,11 @@ final class MonitorStore {
     }
 
     func loadUsage() {
-        // 节流：60 秒内不重复调（首次调用 lastUsageFetchAt 为 nil，放行）
+        // 429 退避期内不发请求
+        if let until = usageBackoffUntil, Date() < until {
+            return
+        }
+        // 节流：usageMinInterval 内不重复调（首次调用 lastUsageFetchAt 为 nil，放行）
         if let last = lastUsageFetchAt,
            Date().timeIntervalSince(last) < usageMinInterval {
             return
@@ -112,8 +118,10 @@ final class MonitorStore {
             case .success(let data):
                 self.usageData = data
                 self.usageRateLimited = false
-            case .rateLimited:
+                self.usageBackoffUntil = nil
+            case .rateLimited(let retryAfter):
                 self.usageRateLimited = true
+                self.usageBackoffUntil = Date().addingTimeInterval(max(retryAfter ?? 0, 15 * 60))
                 // 保留旧数据不清空
             case .failure:
                 if self.usageData == nil {
