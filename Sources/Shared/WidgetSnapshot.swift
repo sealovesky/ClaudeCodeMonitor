@@ -17,9 +17,10 @@ struct UsageSnapshot: Codable, Sendable {
     /// 7d 全模型配额
     let sevenDayPct: Double
     let sevenDayResetsAt: Date?
-    /// 7d Sonnet 单独配额
-    let sevenDaySonnetPct: Double
-    let sevenDaySonnetResetsAt: Date?
+    /// 7d 按模型单独配额（模型名由 API 下发，如 "Fable"）
+    let sevenDayModelPct: Double
+    let sevenDayModelResetsAt: Date?
+    let sevenDayModelName: String?
 }
 
 struct ActivitySnapshot: Codable, Sendable {

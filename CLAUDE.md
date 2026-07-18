@@ -9,7 +9,8 @@ ClaudeCodeMonitor 是一款 macOS 菜单栏 + 桌面 widget 应用，用于监�
 ## 构建与运行
 
 ```bash
-# 一键构建（regenerate xcodeproj + xcodebuild Release + 拷贝到 build/）
+# 一键构建（regenerate xcodeproj + xcodebuild Release + 拷贝到 build/
+# + 安装到 /Applications + lsregister 刷新 appex 注册 + 重启 chronod + 启动 App）
 ./build.sh
 
 # 或手工流程

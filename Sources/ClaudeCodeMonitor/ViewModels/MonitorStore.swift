@@ -256,8 +256,9 @@ final class MonitorStore {
                 fiveHourResetsAt: data.session.flatMap { Self.parseISO($0.resetsAt) },
                 sevenDayPct: data.weekAll?.utilization ?? 0,
                 sevenDayResetsAt: data.weekAll.flatMap { Self.parseISO($0.resetsAt) },
-                sevenDaySonnetPct: data.weekSonnet?.utilization ?? 0,
-                sevenDaySonnetResetsAt: data.weekSonnet.flatMap { Self.parseISO($0.resetsAt) }
+                sevenDayModelPct: data.weekModel?.utilization ?? 0,
+                sevenDayModelResetsAt: data.weekModel.flatMap { Self.parseISO($0.resetsAt) },
+                sevenDayModelName: data.weekModelName
             )
         }
         let last7 = cachedLast7Days.map { DailyBar(date: $0.shortDate, messageCount: $0.messageCount) }

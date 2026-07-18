@@ -38,7 +38,8 @@ struct UsageLimitInfo: Sendable {
 struct UsageData: Sendable {
     let session: UsageLimitInfo?      // five_hour
     let weekAll: UsageLimitInfo?      // seven_day
-    let weekSonnet: UsageLimitInfo?   // seven_day_sonnet
+    let weekModel: UsageLimitInfo?    // limits[kind == weekly_scoped]，按模型的 weekly 限制
+    let weekModelName: String?        // scope.model.display_name，如 "Fable"
 }
 
 enum UsageFetchResult: Sendable {
@@ -101,11 +102,30 @@ enum UsageAPI {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return .failure }
 
+        let (weekModel, weekModelName) = parseModelScopedLimit(json)
         return .success(UsageData(
             session: parseLimitInfo(json["five_hour"]),
             weekAll: parseLimitInfo(json["seven_day"]),
-            weekSonnet: parseLimitInfo(json["seven_day_sonnet"])
+            weekModel: weekModel,
+            weekModelName: weekModelName
         ))
+    }
+
+    /// 按模型的 weekly 限制：新版 API 放在 limits 数组（kind == "weekly_scoped"），
+    /// 模型名从 scope.model.display_name 取；旧顶层字段 seven_day_sonnet/opus 作兜底
+    private static func parseModelScopedLimit(_ json: [String: Any]) -> (UsageLimitInfo?, String?) {
+        if let limits = json["limits"] as? [[String: Any]] {
+            for limit in limits where limit["kind"] as? String == "weekly_scoped" {
+                guard let percent = limit["percent"] as? Double,
+                      let resetsAt = limit["resets_at"] as? String
+                else { continue }
+                let name = ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
+                return (UsageLimitInfo(utilization: percent, resetsAt: resetsAt), name)
+            }
+        }
+        if let legacy = parseLimitInfo(json["seven_day_sonnet"]) { return (legacy, "Sonnet") }
+        if let legacy = parseLimitInfo(json["seven_day_opus"]) { return (legacy, "Opus") }
+        return (nil, nil)
     }
 
     private static func parseLimitInfo(_ obj: Any?) -> UsageLimitInfo? {

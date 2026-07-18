@@ -53,12 +53,12 @@ struct UsageSection: View {
                             color: barColor(week.percentUsed)
                         )
                     }
-                    if let sonnet = usage.weekSonnet {
+                    if let model = usage.weekModel {
                         UsageBar(
-                            title: "Sonnet",
-                            percent: sonnet.percentUsed,
-                            resets: sonnet.resetsAtFormatted,
-                            color: barColor(sonnet.percentUsed)
+                            title: usage.weekModelName ?? "Model",
+                            percent: model.percentUsed,
+                            resets: model.resetsAtFormatted,
+                            color: barColor(model.percentUsed)
                         )
                     }
                 }

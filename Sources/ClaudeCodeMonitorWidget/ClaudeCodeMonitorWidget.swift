@@ -336,9 +336,9 @@ struct MediumWidgetView: View {
             quotaLine(label: "7d", pct: usage.sevenDayPct,
                       color: sevenDaySolid,
                       reset: usage.sevenDayResetsAt)
-            quotaLine(label: "Sonnet", pct: usage.sevenDaySonnetPct,
-                      color: Tone.from(usage.sevenDaySonnetPct).solid,
-                      reset: usage.sevenDaySonnetResetsAt)
+            quotaLine(label: usage.sevenDayModelName ?? "Model", pct: usage.sevenDayModelPct,
+                      color: Tone.from(usage.sevenDayModelPct).solid,
+                      reset: usage.sevenDayModelResetsAt)
         }
     }
 
@@ -457,9 +457,9 @@ struct LargeWidgetView: View {
                 quotaRow(label: "7d", pct: usage.sevenDayPct,
                          color: sevenDaySolid,
                          reset: usage.sevenDayResetsAt)
-                quotaRow(label: "Sonnet", pct: usage.sevenDaySonnetPct,
-                         color: Tone.from(usage.sevenDaySonnetPct).solid,
-                         reset: usage.sevenDaySonnetResetsAt)
+                quotaRow(label: usage.sevenDayModelName ?? "Model", pct: usage.sevenDayModelPct,
+                         color: Tone.from(usage.sevenDayModelPct).solid,
+                         reset: usage.sevenDayModelResetsAt)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

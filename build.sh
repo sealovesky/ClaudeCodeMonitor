@@ -33,6 +33,19 @@ echo "==> Verifying signatures..."
 codesign --verify --deep --strict "$APP_BUNDLE"
 codesign -dvv "$APP_BUNDLE" 2>&1 | grep -E "Authority|TeamIdentifier"
 
+echo "==> Installing to /Applications..."
+pkill -x "$APP_NAME" 2>/dev/null || true
+rm -rf "/Applications/$APP_NAME.app"
+cp -R "$APP_BUNDLE" "/Applications/$APP_NAME.app"
+
+# pluginkit 会锁定 first-seen appex 路径，必须注销 DerivedData 路径、
+# 强制注册 /Applications 版本，并重启 chronod 让 widget 加载新 appex
+LSR="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+"$LSR" -u "$BUILT_APP" 2>/dev/null || true
+"$LSR" -f "/Applications/$APP_NAME.app"
+killall chronod 2>/dev/null || true
+
+open "/Applications/$APP_NAME.app"
+
 echo ""
-echo "==> Done! App bundle: $APP_BUNDLE"
-echo "    Run: open $APP_BUNDLE"
+echo "==> Done! Installed and launched /Applications/$APP_NAME.app"
